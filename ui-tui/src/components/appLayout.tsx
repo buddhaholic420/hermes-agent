@@ -10,7 +10,7 @@ import { $uiState } from '../app/uiStore.js'
 import { INLINE_MODE, SHOW_FPS, TERMUX_TUI_MODE } from '../config/env.js'
 import { PLACEHOLDER } from '../content/placeholders.js'
 import { prevRenderedMsg } from '../domain/blockLayout.js'
-import { transcriptTailSlots } from '../domain/tailDock.js'
+import { type TranscriptTailSlot, transcriptTailSlots } from '../domain/tailDock.js'
 import {
   COMPOSER_PROMPT_GAP_WIDTH,
   composerPromptWidth,
@@ -65,11 +65,43 @@ const TranscriptPane = memo(function TranscriptPane({
   const ui = useStore($uiState)
   const liveTodoCount = useTurnSelector(state => state.todos.length)
   const tailSlots = transcriptTailSlots({
-    assistant: progress.showProgressArea,
     queue: composer.queuedDisplay.length > 0,
     todos: liveTodoCount > 0
   })
-  const showTailDock = tailSlots.length > 0
+
+  const renderTailSlot = (slot: TranscriptTailSlot) => {
+    switch (slot) {
+      case 'queue':
+        return (
+          <QueuedMessages
+            cols={composer.cols}
+            key="queue"
+            queued={composer.queuedDisplay}
+            queueEditIdx={composer.queueEditIdx}
+            t={ui.theme}
+          />
+        )
+      case 'todos':
+        return <LiveTodoPanel key="todos" />
+      case 'assistant':
+        return (
+          <StreamingAssistant
+            cols={composer.cols}
+            compact={ui.compact}
+            detailsMode={ui.detailsMode}
+            detailsModeCommandOverride={ui.detailsModeCommandOverride}
+            key="assistant"
+            prevMsg={transcript.historyItems[transcript.historyItems.length - 1]}
+            progress={progress}
+            sections={ui.sections}
+          />
+        )
+      default: {
+        const exhaustive: never = slot
+        return exhaustive
+      }
+    }
+  }
 
   // Index of the first user-role message; every later user message gets a
   // small dash above it so multi-turn transcripts visually segment by
@@ -134,32 +166,9 @@ const TranscriptPane = memo(function TranscriptPane({
 
           {transcript.virtualHistory.bottomSpacer > 0 ? <Box height={transcript.virtualHistory.bottomSpacer} /> : null}
 
-          {showTailDock ? <Box flexGrow={1} /> : null}
+          <Box flexGrow={1} />
 
-          {tailSlots.map(slot =>
-            slot === 'queue' ? (
-              <QueuedMessages
-                cols={composer.cols}
-                key="queue"
-                queued={composer.queuedDisplay}
-                queueEditIdx={composer.queueEditIdx}
-                t={ui.theme}
-              />
-            ) : slot === 'todos' ? (
-              <LiveTodoPanel key="todos" />
-            ) : (
-              <StreamingAssistant
-                cols={composer.cols}
-                compact={ui.compact}
-                detailsMode={ui.detailsMode}
-                detailsModeCommandOverride={ui.detailsModeCommandOverride}
-                key="assistant"
-                prevMsg={transcript.historyItems[transcript.historyItems.length - 1]}
-                progress={progress}
-                sections={ui.sections}
-              />
-            )
-          )}
+          {tailSlots.map(renderTailSlot)}
         </Box>
       </ScrollBox>
 

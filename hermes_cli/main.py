@@ -1288,6 +1288,84 @@ to avoid false-positive reinstalls on every launch.
 """
 
 
+def _npm_lock_path_package_name(path: str) -> str | None:
+    marker = "node_modules/"
+    if marker not in path:
+        return None
+
+    tail = path.rsplit(marker, 1)[1]
+    parts = tail.split("/")
+    if not parts or not parts[0]:
+        return None
+    if parts[0].startswith("@") and len(parts) >= 2:
+        return f"{parts[0]}/{parts[1]}"
+    return parts[0]
+
+
+def _npm_lock_dependency_names(pkg: dict) -> set[str]:
+    names: set[str] = set()
+    for field in (
+        "dependencies",
+        "devDependencies",
+        "optionalDependencies",
+        "peerDependencies",
+    ):
+        deps = pkg.get(field)
+        if isinstance(deps, dict):
+            names.update(str(name) for name in deps)
+    return names
+
+
+def _tui_relevant_lock_entries(
+    packages: dict,
+    root: Path,
+    ws_root: Path,
+) -> set[str]:
+    """Return package-lock entries covered by the TUI workspace install."""
+    if ws_root == root:
+        return set(packages)
+
+    try:
+        rel = root.relative_to(ws_root).as_posix()
+    except ValueError:
+        return set(packages)
+
+    by_package_name: dict[str, list[str]] = {}
+    for name, pkg in packages.items():
+        if not isinstance(name, str) or not isinstance(pkg, dict):
+            continue
+        package_name = _npm_lock_path_package_name(name)
+        if package_name:
+            by_package_name.setdefault(package_name, []).append(name)
+
+    relevant = {
+        name
+        for name in packages
+        if name == rel or name.startswith(f"{rel}/")
+    }
+    pending = list(relevant)
+
+    while pending:
+        name = pending.pop()
+        pkg = packages.get(name)
+        if not isinstance(pkg, dict):
+            continue
+
+        resolved = pkg.get("resolved")
+        if pkg.get("link") and isinstance(resolved, str) and resolved in packages:
+            if resolved not in relevant:
+                relevant.add(resolved)
+                pending.append(resolved)
+
+        for dep_name in _npm_lock_dependency_names(pkg):
+            for dep_entry in by_package_name.get(dep_name, []):
+                if dep_entry not in relevant:
+                    relevant.add(dep_entry)
+                    pending.append(dep_entry)
+
+    return relevant
+
+
 def _workspace_root(dir: Path) -> Path:
     """Return the npm workspace root for *dir*.
 
@@ -1361,7 +1439,7 @@ def _tui_need_npm_install(root: Path) -> bool:
     already match, which used to trigger a spurious "Installing TUI
     dependencies" on every launch.
 
-    For each entry in the root lock's ``packages`` map:
+    For each TUI-relevant entry in the root lock's ``packages`` map:
       - missing from hidden lock → reinstall (unless the entry is marked
         ``optional`` or ``peer``, which npm may intentionally skip per platform)
       - present but with differing fields (excluding npm-written runtime
@@ -1402,11 +1480,15 @@ def _tui_need_npm_install(root: Path) -> bool:
     def comparable(pkg: dict) -> dict:
         return {k: v for k, v in pkg.items() if k not in _NPM_LOCK_RUNTIME_KEYS}
 
+    relevant = _tui_relevant_lock_entries(wanted, root, ws_root)
     for name, pkg in wanted.items():
         if not name:
             continue
 
         if not isinstance(pkg, dict):
+            continue
+
+        if name not in relevant:
             continue
 
         if name not in installed:

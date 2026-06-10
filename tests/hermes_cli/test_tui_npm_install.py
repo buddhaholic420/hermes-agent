@@ -97,6 +97,83 @@ def test_install_when_version_differs_even_with_peer_drop(tmp_path: Path, main_m
     assert main_mod._tui_need_npm_install(tmp_path) is True
 
 
+def test_workspace_tui_install_ignores_uninstalled_unrelated_workspaces(
+    tmp_path: Path, main_mod
+) -> None:
+    tui_dir = tmp_path / "ui-tui"
+    tui_dir.mkdir()
+    (tui_dir / "package.json").write_text("{}")
+    _touch_ink(tmp_path)
+    (tmp_path / "package-lock.json").write_text(
+        """{
+          "packages": {
+            "": {"workspaces": ["apps/*", "ui-tui"]},
+            "apps/bootstrap-installer": {
+              "name": "@hermes/bootstrap-installer",
+              "version": "0.0.1",
+              "dependencies": {"@tauri-apps/api": "^2.0.0"}
+            },
+            "node_modules/@tauri-apps/api": {"version": "2.0.0"},
+            "ui-tui": {
+              "name": "hermes-tui",
+              "version": "0.0.1",
+              "dependencies": {"foo": "1.0.0"}
+            },
+            "node_modules/foo": {"version": "1.0.0"}
+          }
+        }"""
+    )
+    (tmp_path / "node_modules" / ".package-lock.json").write_text(
+        """{
+          "packages": {
+            "ui-tui": {
+              "name": "hermes-tui",
+              "version": "0.0.1",
+              "dependencies": {"foo": "1.0.0"}
+            },
+            "node_modules/foo": {"version": "1.0.0"}
+          }
+        }"""
+    )
+
+    assert main_mod._tui_need_npm_install(tui_dir) is False
+
+
+def test_workspace_tui_install_detects_missing_tui_dependency(
+    tmp_path: Path, main_mod
+) -> None:
+    tui_dir = tmp_path / "ui-tui"
+    tui_dir.mkdir()
+    (tui_dir / "package.json").write_text("{}")
+    _touch_ink(tmp_path)
+    (tmp_path / "package-lock.json").write_text(
+        """{
+          "packages": {
+            "": {"workspaces": ["apps/*", "ui-tui"]},
+            "ui-tui": {
+              "name": "hermes-tui",
+              "version": "0.0.1",
+              "dependencies": {"foo": "1.0.0"}
+            },
+            "node_modules/foo": {"version": "1.0.0"}
+          }
+        }"""
+    )
+    (tmp_path / "node_modules" / ".package-lock.json").write_text(
+        """{
+          "packages": {
+            "ui-tui": {
+              "name": "hermes-tui",
+              "version": "0.0.1",
+              "dependencies": {"foo": "1.0.0"}
+            }
+          }
+        }"""
+    )
+
+    assert main_mod._tui_need_npm_install(tui_dir) is True
+
+
 def test_no_install_when_lock_older_than_marker(tmp_path: Path, main_mod) -> None:
     _touch_ink(tmp_path)
     (tmp_path / "package-lock.json").write_text("{}")
