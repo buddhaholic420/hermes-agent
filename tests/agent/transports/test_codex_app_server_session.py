@@ -259,6 +259,95 @@ class TestRunTurn:
         assert "[Image attached at: /tmp/a.png]" in text
         assert "[image attached]" in text
 
+    def test_ultra_is_forwarded_when_model_catalog_advertises_it(self):
+        client = FakeClient()
+
+        def handle(method, params):
+            if method == "model/list":
+                return {
+                    "data": [{
+                        "model": "gpt-5.6-sol",
+                        "supportedReasoningEfforts": [
+                            {"reasoningEffort": "max"},
+                            {"reasoningEffort": "ultra"},
+                        ],
+                    }]
+                }
+            if method == "thread/start":
+                return {"thread": {"id": "thread-fake-001"}}
+            if method == "turn/start":
+                return {"turn": {"id": "turn-fake-001"}}
+            return {}
+
+        client._request_handler = handle
+        client.queue_notification(
+            "turn/completed",
+            threadId="thread-fake-001",
+            turn={"id": "turn-fake-001", "status": "completed", "error": None},
+        )
+
+        r = make_session(client).run_turn(
+            "hi",
+            model="gpt-5.6-sol",
+            reasoning_effort="ultra",
+            turn_timeout=2.0,
+        )
+
+        assert r.error is None
+        _method, params = next(req for req in client.requests if req[0] == "turn/start")
+        assert params["model"] == "gpt-5.6-sol"
+        assert params["effort"] == "ultra"
+
+    def test_ultra_fails_closed_when_model_catalog_does_not_advertise_it(self):
+        client = FakeClient()
+
+        def handle(method, params):
+            if method == "model/list":
+                return {
+                    "data": [{
+                        "model": "gpt-5.6-luna",
+                        "supportedReasoningEfforts": [{"reasoningEffort": "max"}],
+                    }]
+                }
+            if method == "thread/start":
+                return {"thread": {"id": "thread-fake-001"}}
+            if method == "turn/start":
+                return {"turn": {"id": "turn-fake-001"}}
+            return {}
+
+        client._request_handler = handle
+        r = make_session(client).run_turn(
+            "hi",
+            model="gpt-5.6-luna",
+            reasoning_effort="ultra",
+            turn_timeout=2.0,
+        )
+
+        assert r.error is not None
+        assert "does not advertise reasoning effort 'ultra'" in r.error
+        assert not any(method == "turn/start" for method, _params in client.requests)
+
+    def test_non_ultra_turn_keeps_existing_app_server_request_shape(self):
+        client = FakeClient()
+        client.queue_notification(
+            "turn/completed",
+            threadId="thread-fake-001",
+            turn={"id": "turn-fake-001", "status": "completed", "error": None},
+        )
+
+        r = make_session(client).run_turn(
+            "hi",
+            model="gpt-5.6-sol",
+            reasoning_effort="high",
+            turn_timeout=2.0,
+        )
+
+        assert r.error is None
+        _method, params = next(req for req in client.requests if req[0] == "turn/start")
+        assert "model" not in params
+        assert "effort" not in params
+        assert not any(method == "model/list" for method, _params in client.requests)
+
     def test_tool_iteration_counter_ticks(self):
         client = FakeClient()
         # Two completed exec items + one final agent message

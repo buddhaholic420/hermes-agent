@@ -75,6 +75,93 @@ class TestCodexBuildKwargs:
         )
         assert kw.get("reasoning", {}).get("effort") == "high"
 
+    def test_ultra_builds_openai_multi_agent_beta_request(self, transport):
+        messages = [{"role": "user", "content": "Investigate this."}]
+        kw = transport.build_kwargs(
+            model="gpt-5.6-sol",
+            messages=messages,
+            tools=[],
+            reasoning_config={"enabled": True, "effort": "ultra"},
+            is_openai_api=True,
+        )
+
+        assert kw["reasoning"] == {"effort": "max"}
+        assert kw["max_tool_calls"] == 100
+        assert kw["extra_body"]["multi_agent"] == {
+            "enabled": True,
+            "max_concurrent_subagents": 3,
+        }
+        assert "responses_multi_agent=v1" in kw["extra_headers"]["OpenAI-Beta"]
+
+    def test_ultra_uses_strongest_effort_supported_by_gpt53_codex(self, transport):
+        kw = transport.build_kwargs(
+            model="gpt-5.3-codex-spark",
+            messages=[{"role": "user", "content": "Investigate this."}],
+            tools=[],
+            reasoning_config={"enabled": True, "effort": "ultra"},
+            is_openai_api=True,
+        )
+
+        assert kw["reasoning"] == {"effort": "xhigh"}
+        assert kw["extra_body"]["multi_agent"]["enabled"] is True
+
+    def test_ultra_preserves_caller_beta_headers_and_concurrency(self, transport):
+        messages = [{"role": "user", "content": "Investigate this."}]
+        kw = transport.build_kwargs(
+            model="gpt-5.6-terra",
+            messages=messages,
+            tools=[],
+            reasoning_config={"enabled": True, "effort": "ultra"},
+            is_openai_api=True,
+            request_overrides={
+                "reasoning": {"effort": "ultra", "summary": "auto"},
+                "extra_headers": {"OpenAI-Beta": "other_beta=v1", "X-Test": "1"},
+                "extra_body": {
+                    "other_field": 42,
+                    "multi_agent": {"max_concurrent_subagents": 4},
+                },
+            },
+        )
+
+        assert kw["extra_body"]["other_field"] == 42
+        assert kw["reasoning"] == {"effort": "max"}
+        assert kw["extra_body"]["multi_agent"] == {
+            "enabled": True,
+            "max_concurrent_subagents": 4,
+        }
+        assert kw["extra_headers"]["X-Test"] == "1"
+        assert "other_beta=v1" in kw["extra_headers"]["OpenAI-Beta"]
+        assert "responses_multi_agent=v1" in kw["extra_headers"]["OpenAI-Beta"]
+
+    def test_ultra_normal_codex_backend_fails_closed(self, transport):
+        with pytest.raises(ValueError, match="codex-runtime app_server"):
+            transport.build_kwargs(
+                model="gpt-5.6-sol",
+                messages=[{"role": "user", "content": "Hi"}],
+                tools=[],
+                reasoning_config={"enabled": True, "effort": "ultra"},
+                is_codex_backend=True,
+            )
+
+    def test_ultra_non_openai_responses_route_fails_closed(self, transport):
+        with pytest.raises(ValueError, match="OpenAI Responses API"):
+            transport.build_kwargs(
+                model="gpt-5.6-sol",
+                messages=[{"role": "user", "content": "Hi"}],
+                tools=[],
+                reasoning_config={"enabled": True, "effort": "ultra"},
+            )
+
+    def test_ultra_rejects_unsupported_openai_model(self, transport):
+        with pytest.raises(ValueError, match="does not support OpenAI Multi-agent"):
+            transport.build_kwargs(
+                model="gpt-5.5",
+                messages=[{"role": "user", "content": "Hi"}],
+                tools=[],
+                reasoning_config={"enabled": True, "effort": "ultra"},
+                is_openai_api=True,
+            )
+
     def test_reasoning_disabled(self, transport):
         messages = [{"role": "user", "content": "Hi"}]
         kw = transport.build_kwargs(

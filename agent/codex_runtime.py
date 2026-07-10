@@ -387,7 +387,19 @@ def run_codex_app_server_turn(
     # return reaches us. Do NOT append again — that would duplicate.
 
     try:
-        turn = agent._codex_session.run_turn(user_input=user_message)
+        reasoning_config = getattr(agent, "reasoning_config", None)
+        reasoning_effort = None
+        if (
+            isinstance(reasoning_config, dict)
+            and reasoning_config.get("enabled") is not False
+            and reasoning_config.get("effort")
+        ):
+            reasoning_effort = str(reasoning_config["effort"]).strip().lower()
+        turn = agent._codex_session.run_turn(
+            user_input=user_message,
+            model=str(getattr(agent, "model", "") or "").strip() or None,
+            reasoning_effort=reasoning_effort,
+        )
     except Exception as exc:
         logger.exception("codex app-server turn failed")
         # Crash → unconditionally drop the session so the next turn

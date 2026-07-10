@@ -117,6 +117,74 @@ def test_normalize_codex_response_ignores_in_progress_server_side_tool_calls():
     assert assistant_message.content == "Milwaukee M18 blade 49-16-2734, ~$30 OEM."
 
 
+def test_normalize_codex_response_preserves_hosted_multi_agent_items():
+    """Hosted delegation telemetry is provider output, not a Hermes tool call."""
+    response = SimpleNamespace(
+        status="completed",
+        output=[
+            {
+                "type": "multi_agent_call",
+                "id": "ma_1",
+                "status": "in_progress",
+                "action": {"type": "spawn", "agent_name": "researcher"},
+            },
+            SimpleNamespace(
+                type="agent_message",
+                id="am_1",
+                status="completed",
+                agent_name="researcher",
+                content=[SimpleNamespace(type="output_text", text="evidence")],
+            ),
+            SimpleNamespace(
+                type="message",
+                role="assistant",
+                status="completed",
+                content=[SimpleNamespace(type="output_text", text="final answer")],
+            ),
+        ],
+    )
+
+    assistant_message, finish_reason = _normalize_codex_response(response)
+
+    assert finish_reason == "stop"
+    assert assistant_message.content == "final answer"
+    assert assistant_message.tool_calls == []
+    item_types = {item["type"] for item in assistant_message.codex_message_items}
+    assert {"multi_agent_call", "agent_message", "message"}.issubset(item_types)
+
+
+def test_hosted_multi_agent_items_preserve_function_tool_continuation():
+    response = SimpleNamespace(
+        status="completed",
+        output=[
+            {
+                "type": "multi_agent_call",
+                "id": "ma_1",
+                "status": "completed",
+                "action": {"type": "spawn", "agent_name": "researcher"},
+            },
+            SimpleNamespace(
+                type="function_call",
+                id="fc_1",
+                call_id="call_1",
+                status="completed",
+                name="lookup",
+                arguments='{"query":"evidence"}',
+            ),
+        ],
+    )
+
+    assistant_message, finish_reason = _normalize_codex_response(response)
+
+    assert finish_reason == "tool_calls"
+    assert len(assistant_message.tool_calls) == 1
+    assert assistant_message.tool_calls[0].function.name == "lookup"
+    assert any(
+        item["type"] == "multi_agent_call"
+        for item in assistant_message.codex_message_items
+    )
+
+
 def test_normalize_codex_response_in_progress_message_still_incomplete():
     """Guard scope: an in_progress *message* item (genuine model output that
     is still streaming) must still mark the turn incomplete — only

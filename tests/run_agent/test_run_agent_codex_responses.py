@@ -428,6 +428,65 @@ def test_build_api_kwargs_codex_preserves_supported_efforts(monkeypatch):
         assert kwargs["reasoning"]["effort"] == effort, f"{effort} should pass through unchanged"
 
 
+def test_ultra_direct_openai_agent_builds_multi_agent_request(monkeypatch):
+    _patch_agent_bootstrap(monkeypatch)
+    agent = run_agent.AIAgent(
+        model="gpt-5.6-sol",
+        provider="openai",
+        api_mode="codex_responses",
+        base_url="https://api.openai.com/v1",
+        **{"api" + "_key": "test-token"},
+        quiet_mode=True,
+        max_iterations=1,
+        skip_context_files=True,
+        skip_memory=True,
+        reasoning_config={"enabled": True, "effort": "ultra"},
+    )
+
+    kwargs = agent._build_api_kwargs([{"role": "user", "content": "hi"}])
+
+    assert kwargs["reasoning"] == {"effort": "max"}
+    assert kwargs["extra_body"]["multi_agent"]["enabled"] is True
+    assert "responses_multi_agent=v1" in kwargs["extra_headers"]["OpenAI-Beta"]
+
+
+def test_ultra_openai_provider_with_custom_base_url_fails_closed(monkeypatch):
+    _patch_agent_bootstrap(monkeypatch)
+    agent = run_agent.AIAgent(
+        model="gpt-5.6-sol",
+        provider="openai",
+        api_mode="codex_responses",
+        base_url="https://proxy.example.test/v1",
+        **{"api" + "_key": "test-token"},
+        quiet_mode=True,
+        max_iterations=1,
+        skip_context_files=True,
+        skip_memory=True,
+        reasoning_config={"enabled": True, "effort": "ultra"},
+    )
+
+    with pytest.raises(ValueError, match="not the OpenAI Responses API"):
+        agent._build_api_kwargs([{"role": "user", "content": "hi"}])
+
+
+def test_ultra_non_responses_transport_fails_closed(monkeypatch):
+    _patch_agent_bootstrap(monkeypatch)
+    agent = run_agent.AIAgent(
+        model="anthropic/claude-sonnet-4",
+        provider="openrouter",
+        base_url="https://openrouter.ai/api/v1",
+        **{"api" + "_key": "test-token"},
+        quiet_mode=True,
+        max_iterations=1,
+        skip_context_files=True,
+        skip_memory=True,
+        reasoning_config={"enabled": True, "effort": "ultra"},
+    )
+
+    with pytest.raises(ValueError, match="Ultra is only supported"):
+        agent._build_api_kwargs([{"role": "user", "content": "hi"}])
+
+
 def test_build_api_kwargs_copilot_responses_omits_openai_only_fields(monkeypatch):
     agent = _build_copilot_agent(monkeypatch)
     kwargs = agent._build_api_kwargs([{"role": "user", "content": "hi"}])

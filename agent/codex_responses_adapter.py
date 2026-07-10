@@ -1068,6 +1068,49 @@ def _format_responses_error(error_obj: Any, response_status: str) -> str:
 # Full response normalization
 # ---------------------------------------------------------------------------
 
+_HOSTED_MULTI_AGENT_ITEM_TYPES = {"multi_agent_call", "agent_message"}
+
+
+def _responses_field(value: Any, name: str, default: Any = None) -> Any:
+    if isinstance(value, dict):
+        return value.get(name, default)
+    return getattr(value, name, default)
+
+
+def _responses_value_to_plain_data(value: Any) -> Any:
+    """Convert SDK/namespace response values into JSON-safe plain data."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {
+            str(key): _responses_value_to_plain_data(item)
+            for key, item in value.items()
+            if not str(key).startswith("_") and item is not None
+        }
+    if isinstance(value, (list, tuple)):
+        return [_responses_value_to_plain_data(item) for item in value]
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        try:
+            return _responses_value_to_plain_data(
+                model_dump(mode="json", exclude_none=True)
+            )
+        except TypeError:
+            return _responses_value_to_plain_data(model_dump())
+    raw_attrs = getattr(value, "__dict__", None)
+    if isinstance(raw_attrs, dict):
+        return _responses_value_to_plain_data(raw_attrs)
+    return str(value)
+
+
+def _responses_output_item_to_dict(item: Any, item_type: str) -> Dict[str, Any]:
+    raw = _responses_value_to_plain_data(item)
+    if not isinstance(raw, dict):
+        raw = {}
+    raw["type"] = item_type
+    return raw
+
+
 def _normalize_codex_response(
     response: Any,
     *,
@@ -1146,15 +1189,12 @@ def _normalize_codex_response(
         "computer_call",
         "local_shell_call",
         "mcp_call",
+        *_HOSTED_MULTI_AGENT_ITEM_TYPES,
     }
 
     for item in output:
-        item_type = getattr(item, "type", None)
-        item_status = getattr(item, "status", None)
-        if isinstance(item_status, str):
-            item_status = item_status.strip().lower()
-        else:
-            item_status = None
+        item_type = str(_responses_field(item, "type", "") or "")
+        item_status = str(_responses_field(item, "status", "") or "").strip().lower()
 
         if (
             item_status in {"queued", "in_progress", "incomplete"}
@@ -1162,6 +1202,15 @@ def _normalize_codex_response(
         ):
             has_incomplete_items = True
             saw_streaming_or_item_incomplete = True
+
+        if item_type in _HOSTED_MULTI_AGENT_ITEM_TYPES:
+            # OpenAI executes these delegation items server-side. Preserve them
+            # in the existing Codex message-item carrier for diagnostics and DB
+            # persistence, but never dispatch them as Hermes client tools.
+            message_items_raw.append(
+                _responses_output_item_to_dict(item, item_type)
+            )
+            continue
 
         if item_type == "message":
             item_phase = getattr(item, "phase", None)

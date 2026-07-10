@@ -182,6 +182,26 @@ model:
   openai_runtime: codex_app_server   # default is "auto" (= Hermes runtime)
 ```
 
+## Ultra reasoning
+
+When the selected Codex model advertises an `ultra` reasoning level, enable its
+hosted task delegation with:
+
+```
+/reasoning ultra
+```
+
+Hermes queries the live `model/list` capability catalog before each model's
+first Ultra turn and forwards both the selected model and `effort: ultra` to
+`turn/start`. If the model is absent from the catalog or does not advertise
+Ultra, the turn fails closed with the advertised levels instead of silently
+using a lower setting. The selected model is re-evaluated on every Ultra turn,
+without restarting the app-server session.
+
+This is **Codex-hosted delegation**, not Hermes' `delegate_task` tool. The latter
+still requires Hermes' default runtime, as described in
+[What's NOT available on this runtime](#whats-not-available-on-this-runtime).
+
 ## Self-improvement loop (memory + skill nudges)
 
 Hermes' background self-improvement fires on counter thresholds:
