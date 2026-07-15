@@ -87,6 +87,21 @@ class TestVerifyConsoleScriptsInstalled:
         names = _load_console_script_names()
         assert names == ["hermes", "hermes-agent", "hermes-acp"]
 
+    def test_project_metadata_exposes_nemobot_primary_commands(self):
+        project_root = Path(__file__).resolve().parents[2]
+        pyproject = project_root / "pyproject.toml"
+
+        import tomllib
+
+        project = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]
+        scripts = project["scripts"]
+
+        assert project["name"] == "nemobot-agent"
+        assert scripts["nemobot"] == "hermes_cli.main:main"
+        assert scripts["nemobot-agent"] == "run_agent:main"
+        assert scripts["nemobot-acp"] == "acp_adapter.entry:main"
+        assert {"hermes", "hermes-agent", "hermes-acp"} <= set(scripts)
+
     def test_primary_install_success_still_verifies_scripts(self):
         import hermes_cli.main as main_mod
 
