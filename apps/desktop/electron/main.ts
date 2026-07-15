@@ -25,7 +25,8 @@ import {
   screen,
   session,
   shell,
-  systemPreferences
+  systemPreferences,
+  Tray
 } from 'electron'
 import nodePty from 'node-pty'
 
@@ -2180,6 +2181,8 @@ let updateInFlight = false
 // set, window-all-closed calls app.quit() on every platform so the process
 // actually dies and the hand-off script can proceed immediately.
 let isQuittingForHandoff = false
+let isQuitting = false
+let tray: Tray | null = null
 
 // Resolve the staged updater binary. The Tauri installer copies itself to
 // HERMES_HOME/hermes-setup.exe on a successful install (see
@@ -7162,6 +7165,48 @@ function closePetOverlay() {
   petOverlayWindow = null
 }
 
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return
+  }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore()
+  }
+
+  mainWindow.show()
+  mainWindow.focus()
+}
+
+function createTray() {
+  if (!IS_WINDOWS || tray) {
+    return
+  }
+
+  const icon = getAppIconPath()
+  if (!icon) {
+    rememberLog('[tray] skipped: application icon is unavailable')
+    return
+  }
+
+  tray = new Tray(icon)
+  tray.setToolTip('Hermes')
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: 'Open Hermes', click: showMainWindow },
+      { type: 'separator' },
+      {
+        label: 'Quit Hermes',
+        click: () => {
+          isQuitting = true
+          app.quit()
+        }
+      }
+    ])
+  )
+  tray.on('click', showMainWindow)
+}
+
 function createWindow() {
   const icon = getAppIconPath()
   const savedWindowState = readWindowState()
@@ -7232,7 +7277,20 @@ function createWindow() {
   mainWindow.on('moved', schedulePersistWindowState)
   mainWindow.on('maximize', schedulePersistWindowState)
   mainWindow.on('unmaximize', schedulePersistWindowState)
-  mainWindow.on('close', () => schedulePersistWindowState.flush())
+  mainWindow.on('close', event => {
+    schedulePersistWindowState.flush()
+
+    // On Windows, the title-bar X hides Hermes into the notification area rather
+    // than terminating the desktop process. Explicit tray-menu quits and update
+    // handoffs set isQuitting so they still close normally.
+    if (IS_WINDOWS && !isQuitting && !isQuittingForHandoff) {
+      event.preventDefault()
+      closePetOverlay()
+      mainWindow.hide()
+    } else {
+      closePetOverlay()
+    }
+  })
 
   // The overlay rides the main window — closing the app's primary window must
   // tear it down too (otherwise it strands as an orphan that blocks
@@ -9027,6 +9085,7 @@ app.whenReady().then(() => {
   configureSpellChecker()
   registerPowerResumeListeners()
   createWindow()
+  createTray()
 
   // Win/Linux cold start: the launching hermes:// URL is in our own argv.
   const _coldStartLink = _extractDeepLink(process.argv)
@@ -9071,6 +9130,8 @@ function configureSpellChecker() {
 }
 
 app.on('before-quit', () => {
+  isQuitting = true
+
   // The always-on-top overlay isn't a "real" app window; close it so a stray
   // pet can't keep the process alive or float over a quit app.
   closePetOverlay()
@@ -9100,6 +9161,11 @@ app.on('before-quit', () => {
 
   stopBackendChild(hermesProcess)
   stopAllPoolBackends()
+
+  if (tray) {
+    tray.destroy()
+    tray = null
+  }
 })
 
 app.on('window-all-closed', () => {
